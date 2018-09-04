@@ -242,7 +242,7 @@ For more information about the governance of the Node.js project, see
 * [cjihrig](https://github.com/cjihrig) -
 **Colin Ihrig** &lt;cjihrig@gmail.com&gt; (he/him)
 * [danbev](https://github.com/danbev) -
-**Daniel Bevenius** &lt;daniel.bevenius@gmail.com&gt;
+**Daniel Bevenius** &lt;daniel.bevenius@gmail.com&gt; (he/him)
 * [fhinkel](https://github.com/fhinkel) -
 **Franziska Hinkelmann** &lt;franziska.hinkelmann@gmail.com&gt; (she/her)
 * [Fishrock123](https://github.com/Fishrock123) -
@@ -348,7 +348,7 @@ For more information about the governance of the Node.js project, see
 * [codebytere](https://github.com/codebytere) -
 **Shelley Vohr** &lt;codebytere@gmail.com&gt; (she/her)
 * [danbev](https://github.com/danbev) -
-**Daniel Bevenius** &lt;daniel.bevenius@gmail.com&gt;
+**Daniel Bevenius** &lt;daniel.bevenius@gmail.com&gt; (he/him)
 * [DavidCai1993](https://github.com/DavidCai1993) -
 **David Cai** &lt;davidcai1993@yahoo.com&gt; (he/him)
 * [davisjam](https://github.com/davisjam) -
@@ -431,6 +431,8 @@ For more information about the governance of the Node.js project, see
 **Luigi Pinca** &lt;luigipinca@gmail.com&gt; (he/him)
 * [lucamaraschi](https://github.com/lucamaraschi) -
 **Luca Maraschi** &lt;luca.maraschi@gmail.com&gt; (he/him)
+* [lundibundi](https://github.com/lundibundi) -
+**Denys Otrishko** &lt;shishugi@gmail.com&gt; (he/him)
 * [maclover7](https://github.com/maclover7) -
 **Jon Moss** &lt;me@jonathanmoss.me&gt; (he/him)
 * [mafintosh](https://github.com/mafintosh)

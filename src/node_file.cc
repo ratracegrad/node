@@ -1460,7 +1460,7 @@ static void ReadDir(const FunctionCallbackInfo<Value>& args) {
 
   const enum encoding encoding = ParseEncoding(env->isolate(), args[1], UTF8);
 
-  bool with_types = args[2]->BooleanValue();
+  bool with_types = args[2]->IsTrue();
 
   FSReqBase* req_wrap_async = GetReqWrap(env, args[3]);
   if (req_wrap_async != nullptr) {  // readdir(path, encoding, withTypes, req)
@@ -1819,7 +1819,7 @@ static void WriteString(const FunctionCallbackInfo<Value>& args) {
 
   if (is_async) {  // write(fd, string, pos, enc, req)
     CHECK_NOT_NULL(req_wrap_async);
-    len = StringBytes::StorageSize(env->isolate(), value, enc);
+    if (!StringBytes::StorageSize(env->isolate(), value, enc).To(&len)) return;
     FSReqBase::FSReqBuffer& stack_buffer =
         req_wrap_async->Init("write", len, enc);
     // StorageSize may return too large a char, so correct the actual length
@@ -1847,7 +1847,8 @@ static void WriteString(const FunctionCallbackInfo<Value>& args) {
     FSReqWrapSync req_wrap_sync;
     FSReqBase::FSReqBuffer stack_buffer;
     if (buf == nullptr) {
-      len = StringBytes::StorageSize(env->isolate(), value, enc);
+      if (!StringBytes::StorageSize(env->isolate(), value, enc).To(&len))
+        return;
       stack_buffer.AllocateSufficientStorage(len + 1);
       // StorageSize may return too large a char, so correct the actual length
       // by the write size

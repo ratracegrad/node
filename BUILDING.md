@@ -44,7 +44,7 @@ platforms in production.
 | macOS/OS X   | Tier 1       | >= 10.11                         | x64                  |                  |
 | Windows      | Tier 1       | >= Windows 7/2008 R2/2012 R2     | x86, x64             | [2](#fn2),[3](#fn3),[4](#fn4) |
 | SmartOS      | Tier 2       | >= 15 < 16.4                     | x86, x64             | [1](#fn1) |
-| FreeBSD      | Tier 2       | >= 10                            | x64                  |                  |
+| FreeBSD      | Tier 2       | >= 11                            | x64                  |                  |
 | GNU/Linux    | Tier 2       | kernel >= 3.13.0, glibc >= 2.19  | ppc64le >=power8     |                  |
 | AIX          | Tier 2       | >= 7.1 TL04                      | ppc64be >=power7     |                  |
 | GNU/Linux    | Tier 2       | kernel >= 3.10, glibc >= 2.17    | s390x                |                  |
@@ -135,17 +135,6 @@ More Developer Tools...`. This step will install `clang`, `clang++`, and
 If the path to your build directory contains a space, the build will likely
 fail.
 
-After building, setting up [firewall rules](tools/macos-firewall.sh) can avoid
-popups asking to accept incoming network connections when running tests.
-
-Running the following script on macOS will add the firewall rules for the
-executable `node` in the `out` directory and the symbolic `node` link in the
-project's root directory.
-
-```console
-$ sudo ./tools/macos-firewall.sh
-```
-
 On FreeBSD and OpenBSD, you may also need:
 * libexecinfo
 
@@ -168,6 +157,17 @@ for more information.
 
 Note that the above requires that `python` resolve to Python 2.6 or 2.7
 and not a newer version.
+
+After building, setting up [firewall rules](tools/macos-firewall.sh) can avoid
+popups asking to accept incoming network connections when running tests.
+
+Running the following script on macOS will add the firewall rules for the
+executable `node` in the `out` directory and the symbolic `node` link in the
+project's root directory.
+
+```console
+$ sudo ./tools/macos-firewall.sh
+```
 
 #### Running Tests
 
@@ -253,6 +253,44 @@ To install this version of Node.js into a system directory:
 $ [sudo] make install
 ```
 
+#### Building a debug build
+
+If you run into an issue where the information provided by the JS stack trace
+is not enough, or if you suspect the error happens outside of the JS VM, you
+can try to build a debug enabled binary:
+
+```console
+$ ./configure --debug
+$ make -j4
+```
+
+`make` with `./configure --debug` generates two binaries, the regular release
+one in `out/Release/node` and a debug binary in `out/Debug/node`, only the
+release version is actually installed when you run `make install`.
+
+To use the debug build with all the normal dependencies overwrite the release
+version in the install directory:
+
+``` console
+$ make install --prefix=/opt/node-debug/
+$ cp -a -f out/Debug/node /opt/node-debug/node
+```
+
+When using the debug binary, core dumps will be generated in case of crashes.
+These core dumps are useful for debugging when provided with the
+corresponding original debug binary and system information.
+
+Reading the core dump requires `gdb` built on the same platform the core dump
+was captured on (i.e. 64 bit `gdb` for `node` built on a 64 bit system, Linux
+`gdb` for `node` built on Linux) otherwise you will get errors like
+`not in executable format: File format not recognized`.
+
+Example of generating a backtrace from the core dump:
+
+``` console
+$ gdb /opt/node-debug/node core.node.8.1535359906
+$ backtrace
+```
 
 ### Windows
 

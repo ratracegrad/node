@@ -756,6 +756,8 @@ static X509_STORE* NewRootCertStore() {
   if (*system_cert_path != '\0') {
     X509_STORE_load_locations(store, system_cert_path, nullptr);
   }
+  // TODO(addaleax): Replace `ssl_openssl_cert_store` with
+  // `per_process_opts->ssl_openssl_cert_store`.
   if (ssl_openssl_cert_store) {
     X509_STORE_set_default_paths(store);
   } else {
@@ -2926,6 +2928,20 @@ void CipherBase::SetAuthTag(const FunctionCallbackInfo<Value>& args) {
 }
 
 
+bool CipherBase::MaybePassAuthTagToOpenSSL() {
+  if (!auth_tag_set_ && auth_tag_len_ != kNoAuthTagLength) {
+    if (!EVP_CIPHER_CTX_ctrl(ctx_.get(),
+                             EVP_CTRL_AEAD_SET_TAG,
+                             auth_tag_len_,
+                             reinterpret_cast<unsigned char*>(auth_tag_))) {
+      return false;
+    }
+    auth_tag_set_ = true;
+  }
+  return true;
+}
+
+
 bool CipherBase::SetAAD(const char* data, unsigned int len, int plaintext_len) {
   if (!ctx_ || !IsAuthenticatedMode())
     return false;
@@ -2945,15 +2961,9 @@ bool CipherBase::SetAAD(const char* data, unsigned int len, int plaintext_len) {
     if (!CheckCCMMessageLength(plaintext_len))
       return false;
 
-    if (kind_ == kDecipher && !auth_tag_set_ && auth_tag_len_ > 0 &&
-        auth_tag_len_ != kNoAuthTagLength) {
-      if (!EVP_CIPHER_CTX_ctrl(ctx_.get(),
-                               EVP_CTRL_CCM_SET_TAG,
-                               auth_tag_len_,
-                               reinterpret_cast<unsigned char*>(auth_tag_))) {
+    if (kind_ == kDecipher) {
+      if (!MaybePassAuthTagToOpenSSL())
         return false;
-      }
-      auth_tag_set_ = true;
     }
 
     // Specify the plaintext length.
@@ -2998,14 +3008,10 @@ CipherBase::UpdateResult CipherBase::Update(const char* data,
       return kErrorMessageSize;
   }
 
-  // on first update:
-  if (kind_ == kDecipher && IsAuthenticatedMode() && auth_tag_len_ > 0 &&
-      auth_tag_len_ != kNoAuthTagLength && !auth_tag_set_) {
-    CHECK(EVP_CIPHER_CTX_ctrl(ctx_.get(),
-                              EVP_CTRL_AEAD_SET_TAG,
-                              auth_tag_len_,
-                              reinterpret_cast<unsigned char*>(auth_tag_)));
-    auth_tag_set_ = true;
+  // Pass the authentication tag to OpenSSL if possible. This will only happen
+  // once, usually on the first update.
+  if (kind_ == kDecipher && IsAuthenticatedMode()) {
+    CHECK(MaybePassAuthTagToOpenSSL());
   }
 
   *out_len = 0;
@@ -3053,7 +3059,8 @@ void CipherBase::Update(const FunctionCallbackInfo<Value>& args) {
   // Only copy the data if we have to, because it's a string
   if (args[0]->IsString()) {
     StringBytes::InlineDecoder decoder;
-    if (!decoder.Decode(env, args[0].As<String>(), args[1], UTF8))
+    if (!decoder.Decode(env, args[0].As<String>(), args[1], UTF8)
+             .FromMaybe(false))
       return;
     r = cipher->Update(decoder.out(), decoder.size(), &out, &out_len);
   } else {
@@ -3091,7 +3098,7 @@ void CipherBase::SetAutoPadding(const FunctionCallbackInfo<Value>& args) {
   CipherBase* cipher;
   ASSIGN_OR_RETURN_UNWRAP(&cipher, args.Holder());
 
-  bool b = cipher->SetAutoPadding(args.Length() < 1 || args[0]->BooleanValue());
+  bool b = cipher->SetAutoPadding(args.Length() < 1 || args[0]->IsTrue());
   args.GetReturnValue().Set(b);  // Possibly report invalid state failure
 }
 
@@ -3104,6 +3111,10 @@ bool CipherBase::Final(unsigned char** out, int* out_len) {
 
   *out = Malloc<unsigned char>(
       static_cast<size_t>(EVP_CIPHER_CTX_block_size(ctx_.get())));
+
+  if (kind_ == kDecipher && IsSupportedAuthenticatedMode(mode)) {
+    MaybePassAuthTagToOpenSSL();
+  }
 
   // In CCM mode, final() only checks whether authentication failed in update().
   // EVP_CipherFinal_ex must not be called and will fail.
@@ -3239,7 +3250,8 @@ void Hmac::HmacUpdate(const FunctionCallbackInfo<Value>& args) {
   bool r = false;
   if (args[0]->IsString()) {
     StringBytes::InlineDecoder decoder;
-    if (decoder.Decode(env, args[0].As<String>(), args[1], UTF8)) {
+    if (decoder.Decode(env, args[0].As<String>(), args[1], UTF8)
+            .FromMaybe(false)) {
       r = hmac->HmacUpdate(decoder.out(), decoder.size());
     }
   } else {
@@ -3346,7 +3358,8 @@ void Hash::HashUpdate(const FunctionCallbackInfo<Value>& args) {
   bool r = true;
   if (args[0]->IsString()) {
     StringBytes::InlineDecoder decoder;
-    if (!decoder.Decode(env, args[0].As<String>(), args[1], UTF8)) {
+    if (!decoder.Decode(env, args[0].As<String>(), args[1], UTF8)
+             .FromMaybe(false)) {
       args.GetReturnValue().Set(false);
       return;
     }
@@ -3646,6 +3659,45 @@ void Sign::SignFinal(const FunctionCallbackInfo<Value>& args) {
   args.GetReturnValue().Set(rc);
 }
 
+enum ParsePublicKeyResult {
+  kParsePublicOk,
+  kParsePublicNotRecognized,
+  kParsePublicFailed
+};
+
+static ParsePublicKeyResult ParsePublicKey(EVPKeyPointer* pkey,
+                                           const char* key_pem,
+                                           int key_pem_len) {
+  BIOPointer bp(BIO_new_mem_buf(const_cast<char*>(key_pem), key_pem_len));
+  if (!bp)
+    return kParsePublicFailed;
+
+  // Check if this is a PKCS#8 or RSA public key before trying as X.509.
+  if (strncmp(key_pem, PUBLIC_KEY_PFX, PUBLIC_KEY_PFX_LEN) == 0) {
+    pkey->reset(
+        PEM_read_bio_PUBKEY(bp.get(), nullptr, NoPasswordCallback, nullptr));
+  } else if (strncmp(key_pem, PUBRSA_KEY_PFX, PUBRSA_KEY_PFX_LEN) == 0) {
+    RSAPointer rsa(PEM_read_bio_RSAPublicKey(
+        bp.get(), nullptr, PasswordCallback, nullptr));
+    if (rsa) {
+      pkey->reset(EVP_PKEY_new());
+      if (*pkey)
+        EVP_PKEY_set1_RSA(pkey->get(), rsa.get());
+    }
+  } else if (strncmp(key_pem, CERTIFICATE_PFX, CERTIFICATE_PFX_LEN) == 0) {
+    // X.509 fallback
+    X509Pointer x509(PEM_read_bio_X509(
+        bp.get(), nullptr, NoPasswordCallback, nullptr));
+    if (!x509)
+      return kParsePublicFailed;
+
+    pkey->reset(X509_get_pubkey(x509.get()));
+  } else {
+    return kParsePublicNotRecognized;
+  }
+
+  return *pkey ? kParsePublicOk : kParsePublicFailed;
+}
 
 void Verify::Initialize(Environment* env, v8::Local<Object> target) {
   Local<FunctionTemplate> t = env->NewFunctionTemplate(New);
@@ -3706,34 +3758,7 @@ SignBase::Error Verify::VerifyFinal(const char* key_pem,
   *verify_result = false;
   EVPMDPointer mdctx = std::move(mdctx_);
 
-  BIOPointer bp(BIO_new_mem_buf(const_cast<char*>(key_pem), key_pem_len));
-  if (!bp)
-    return kSignPublicKey;
-
-  // Check if this is a PKCS#8 or RSA public key before trying as X.509.
-  // Split this out into a separate function once we have more than one
-  // consumer of public keys.
-  if (strncmp(key_pem, PUBLIC_KEY_PFX, PUBLIC_KEY_PFX_LEN) == 0) {
-    pkey.reset(
-        PEM_read_bio_PUBKEY(bp.get(), nullptr, NoPasswordCallback, nullptr));
-  } else if (strncmp(key_pem, PUBRSA_KEY_PFX, PUBRSA_KEY_PFX_LEN) == 0) {
-    RSAPointer rsa(PEM_read_bio_RSAPublicKey(
-        bp.get(), nullptr, PasswordCallback, nullptr));
-    if (rsa) {
-      pkey.reset(EVP_PKEY_new());
-      if (pkey)
-        EVP_PKEY_set1_RSA(pkey.get(), rsa.get());
-    }
-  } else {
-    // X.509 fallback
-    X509Pointer x509(PEM_read_bio_X509(
-        bp.get(), nullptr, NoPasswordCallback, nullptr));
-    if (!x509)
-      return kSignPublicKey;
-
-    pkey.reset(X509_get_pubkey(x509.get()));
-  }
-  if (!pkey)
+  if (ParsePublicKey(&pkey, key_pem, key_pem_len) != kParsePublicOk)
     return kSignPublicKey;
 
   if (!EVP_DigestFinal_ex(mdctx.get(), m, &m_len))
@@ -3803,40 +3828,25 @@ bool PublicKeyCipher::Cipher(const char* key_pem,
                              size_t* out_len) {
   EVPKeyPointer pkey;
 
-  BIOPointer bp(BIO_new_mem_buf(const_cast<char*>(key_pem), key_pem_len));
-  if (!bp)
-    return false;
-
   // Check if this is a PKCS#8 or RSA public key before trying as X.509 and
   // private key.
-  if (operation == kPublic &&
-      strncmp(key_pem, PUBLIC_KEY_PFX, PUBLIC_KEY_PFX_LEN) == 0) {
-    pkey.reset(PEM_read_bio_PUBKEY(bp.get(), nullptr, nullptr, nullptr));
-  } else if (operation == kPublic &&
-             strncmp(key_pem, PUBRSA_KEY_PFX, PUBRSA_KEY_PFX_LEN) == 0) {
-    RSAPointer rsa(
-        PEM_read_bio_RSAPublicKey(bp.get(), nullptr, nullptr, nullptr));
-    if (rsa) {
-      pkey.reset(EVP_PKEY_new());
-      if (pkey)
-        EVP_PKEY_set1_RSA(pkey.get(), rsa.get());
-    }
-  } else if (operation == kPublic &&
-             strncmp(key_pem, CERTIFICATE_PFX, CERTIFICATE_PFX_LEN) == 0) {
-    X509Pointer x509(
-        PEM_read_bio_X509(bp.get(), nullptr, NoPasswordCallback, nullptr));
-    if (!x509)
+  if (operation == kPublic) {
+    ParsePublicKeyResult pkeyres = ParsePublicKey(&pkey, key_pem, key_pem_len);
+    if (pkeyres == kParsePublicFailed)
       return false;
-
-    pkey.reset(X509_get_pubkey(x509.get()));
-  } else {
+  }
+  if (!pkey) {
+    // Private key fallback.
+    BIOPointer bp(BIO_new_mem_buf(const_cast<char*>(key_pem), key_pem_len));
+    if (!bp)
+      return false;
     pkey.reset(PEM_read_bio_PrivateKey(bp.get(),
                                        nullptr,
                                        PasswordCallback,
                                        const_cast<char*>(passphrase)));
+    if (!pkey)
+      return false;
   }
-  if (!pkey)
-    return false;
 
   EVPKeyCtxPointer ctx(EVP_PKEY_CTX_new(pkey.get(), nullptr));
   if (!ctx)
@@ -3872,7 +3882,8 @@ void PublicKeyCipher::Cipher(const FunctionCallbackInfo<Value>& args) {
   char* buf = Buffer::Data(args[1]);
   ssize_t len = Buffer::Length(args[1]);
 
-  int padding = args[2]->Uint32Value();
+  uint32_t padding;
+  if (!args[2]->Uint32Value(env->context()).To(&padding)) return;
 
   String::Utf8Value passphrase(args.GetIsolate(), args[3]);
 
@@ -4437,8 +4448,9 @@ void ECDH::GetPublicKey(const FunctionCallbackInfo<Value>& args) {
     return env->ThrowError("Failed to get ECDH public key");
 
   int size;
-  point_conversion_form_t form =
-      static_cast<point_conversion_form_t>(args[0]->Uint32Value());
+  CHECK(args[0]->IsUint32());
+  uint32_t val = args[0].As<Uint32>()->Value();
+  point_conversion_form_t form = static_cast<point_conversion_form_t>(val);
 
   size = EC_POINT_point2oct(ecdh->group_, pub, form, nullptr, 0, nullptr);
   if (size == 0)
@@ -5053,8 +5065,9 @@ void ConvertKey(const FunctionCallbackInfo<Value>& args) {
   if (pub == nullptr)
     return env->ThrowError("Failed to convert Buffer to EC_POINT");
 
-  point_conversion_form_t form =
-      static_cast<point_conversion_form_t>(args[2]->Uint32Value());
+  CHECK(args[2]->IsUint32());
+  uint32_t val = args[2].As<Uint32>()->Value();
+  point_conversion_form_t form = static_cast<point_conversion_form_t>(val);
 
   int size = EC_POINT_point2oct(
       group.get(), pub.get(), form, nullptr, 0, nullptr);
@@ -5094,14 +5107,14 @@ void InitCryptoOnce() {
   OPENSSL_no_config();
 
   // --openssl-config=...
-  if (!openssl_config.empty()) {
+  if (!per_process_opts->openssl_config.empty()) {
     OPENSSL_load_builtin_modules();
 #ifndef OPENSSL_NO_ENGINE
     ENGINE_load_builtin_engines();
 #endif
     ERR_clear_error();
     CONF_modules_load_file(
-        openssl_config.c_str(),
+        per_process_opts->openssl_config.c_str(),
         nullptr,
         CONF_MFLAGS_DEFAULT_SECTION);
     int err = ERR_get_error();
@@ -5119,6 +5132,9 @@ void InitCryptoOnce() {
 #ifdef NODE_FIPS_MODE
   /* Override FIPS settings in cnf file, if needed. */
   unsigned long err = 0;  // NOLINT(runtime/int)
+  // TODO(addaleax): Use commented part instead.
+  /*if (per_process_opts->enable_fips_crypto ||
+      per_process_opts->force_fips_crypto) {*/
   if (enable_fips_crypto || force_fips_crypto) {
     if (0 == FIPS_mode() && !FIPS_mode_set(1)) {
       err = ERR_get_error();
@@ -5150,7 +5166,8 @@ void InitCryptoOnce() {
 void SetEngine(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   CHECK(args.Length() >= 2 && args[0]->IsString());
-  unsigned int flags = args[1]->Uint32Value();
+  uint32_t flags;
+  if (!args[1]->Uint32Value(env->context()).To(&flags)) return;
 
   ClearErrorOnReturn clear_error_on_return;
 
@@ -5181,10 +5198,12 @@ void GetFipsCrypto(const FunctionCallbackInfo<Value>& args) {
 }
 
 void SetFipsCrypto(const FunctionCallbackInfo<Value>& args) {
+  // TODO(addaleax): Use options parser variables instead.
   CHECK(!force_fips_crypto);
   Environment* env = Environment::GetCurrent(args);
   const bool enabled = FIPS_mode();
-  const bool enable = args[0]->BooleanValue();
+  bool enable;
+  if (!args[0]->BooleanValue(env->context()).To(&enable)) return;
   if (enable == enabled)
     return;  // No action needed.
   if (!FIPS_mode_set(enable)) {
@@ -5256,4 +5275,4 @@ void Initialize(Local<Object> target,
 }  // namespace crypto
 }  // namespace node
 
-NODE_BUILTIN_MODULE_CONTEXT_AWARE(crypto, node::crypto::Initialize)
+NODE_MODULE_CONTEXT_AWARE_INTERNAL(crypto, node::crypto::Initialize)

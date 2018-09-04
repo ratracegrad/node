@@ -199,16 +199,26 @@ typedef intptr_t ssize_t;
 
 namespace node {
 
-NODE_EXTERN extern bool no_deprecation;
+// TODO(addaleax): Remove all of these.
+NODE_DEPRECATED("use command-line flags",
+                NODE_EXTERN extern bool no_deprecation);
 #if HAVE_OPENSSL
-NODE_EXTERN extern bool ssl_openssl_cert_store;
+NODE_DEPRECATED("use command-line flags",
+                NODE_EXTERN extern bool ssl_openssl_cert_store);
 # if NODE_FIPS_MODE
-NODE_EXTERN extern bool enable_fips_crypto;
-NODE_EXTERN extern bool force_fips_crypto;
+NODE_DEPRECATED("use command-line flags",
+                NODE_EXTERN extern bool enable_fips_crypto);
+NODE_DEPRECATED("user command-line flags",
+                NODE_EXTERN extern bool force_fips_crypto);
 # endif
 #endif
 
+// TODO(addaleax): Officially deprecate this and replace it with something
+// better suited for a public embedder API.
 NODE_EXTERN int Start(int argc, char* argv[]);
+
+// TODO(addaleax): Officially deprecate this and replace it with something
+// better suited for a public embedder API.
 NODE_EXTERN void Init(int* argc,
                       const char** argv,
                       int* exec_argc,
@@ -222,7 +232,7 @@ NODE_EXTERN void FreeArrayBufferAllocator(ArrayBufferAllocator* allocator);
 class IsolateData;
 class Environment;
 
-class MultiIsolatePlatform : public v8::Platform {
+class NODE_EXTERN MultiIsolatePlatform : public v8::Platform {
  public:
   virtual ~MultiIsolatePlatform() { }
   // Returns true if work was dispatched or executed. New tasks that are
@@ -250,21 +260,15 @@ NODE_EXTERN v8::Local<v8::Context> NewContext(
 // If `platform` is passed, it will be used to register new Worker instances.
 // It can be `nullptr`, in which case creating new Workers inside of
 // Environments that use this `IsolateData` will not work.
-// TODO(helloshuangzi): switch to default parameters.
-NODE_EXTERN IsolateData* CreateIsolateData(
-    v8::Isolate* isolate,
-    struct uv_loop_s* loop);
 NODE_EXTERN IsolateData* CreateIsolateData(
     v8::Isolate* isolate,
     struct uv_loop_s* loop,
-    MultiIsolatePlatform* platform);
-NODE_EXTERN IsolateData* CreateIsolateData(
-    v8::Isolate* isolate,
-    struct uv_loop_s* loop,
-    MultiIsolatePlatform* platform,
-    ArrayBufferAllocator* allocator);
+    MultiIsolatePlatform* platform = nullptr,
+    ArrayBufferAllocator* allocator = nullptr);
 NODE_EXTERN void FreeIsolateData(IsolateData* isolate_data);
 
+// TODO(addaleax): Add an official variant using STL containers, and move
+// per-Environment options parsing here.
 NODE_EXTERN Environment* CreateEnvironment(IsolateData* isolate_data,
                                            v8::Local<v8::Context> context,
                                            int argc,
@@ -406,13 +410,13 @@ NODE_DEPRECATED("Use FatalException(isolate, ...)",
   return FatalException(v8::Isolate::GetCurrent(), try_catch);
 })
 
-// Don't call with encoding=UCS2.
 NODE_EXTERN v8::Local<v8::Value> Encode(v8::Isolate* isolate,
                                         const char* buf,
                                         size_t len,
                                         enum encoding encoding = LATIN1);
 
-// The input buffer should be in host endianness.
+// Warning: This reverses endianness on Big Endian platforms, even though the
+// signature using uint16_t implies that it should not.
 NODE_EXTERN v8::Local<v8::Value> Encode(v8::Isolate* isolate,
                                         const uint16_t* buf,
                                         size_t len);

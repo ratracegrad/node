@@ -2,11 +2,10 @@
 'use strict';
 const common = require('../common');
 const assert = require('assert');
-const cares = process.binding('cares_wrap');
+const { internalBinding } = require('internal/test/binding');
+const cares = internalBinding('cares_wrap');
 const dns = require('dns');
 const dnsPromises = dns.promises;
-
-const { internalBinding } = require('internal/test/binding');
 
 // Stub `getaddrinfo` to *always* error.
 cares.getaddrinfo = () => internalBinding('uv').UV_ENOENT;

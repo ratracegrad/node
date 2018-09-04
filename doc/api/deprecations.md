@@ -998,7 +998,7 @@ deprecated and support will be removed in the future.
 
 Type: Documentation-only
 
-The option `produceCachedData` has been deprecated. Use
+The `produceCachedData` option is deprecated. Use
 [`script.createCachedData()`][] instead.
 
 <a id="DEP0111"></a>
@@ -1031,6 +1031,25 @@ With the current crypto API, having `Cipher.setAuthTag()` and
 when called. They have never been documented and will be removed in a future
 release.
 
+<a id="DEP0114"></a>
+### DEP0114: crypto._toBuf()
+
+Type: Runtime
+
+The `crypto._toBuf()` function was not designed to be used by modules outside
+of Node.js core and will be removed in the future.
+
+<a id="DEP0115"></a>
+### DEP0115: crypto.prng(), crypto.pseudoRandomBytes(), crypto.rng()
+
+Type: Runtime
+
+In recent versions of Node.js, there is no difference between
+[`crypto.randomBytes()`][] and `crypto.pseudoRandomBytes()`. The latter is
+deprecated along with the undocumented aliases `crypto.prng()` and
+`crypto.rng()` in favor of [`crypto.randomBytes()`][] and will be removed in a
+future release.
+
 [`--pending-deprecation`]: cli.html#cli_pending_deprecation
 [`Buffer.allocUnsafeSlow(size)`]: buffer.html#buffer_class_method_buffer_allocunsafeslow_size
 [`Buffer.from(array)`]: buffer.html#buffer_class_method_buffer_from_array
@@ -1057,6 +1076,7 @@ release.
 [`crypto.DEFAULT_ENCODING`]: crypto.html#crypto_crypto_default_encoding
 [`crypto.fips`]: crypto.html#crypto_crypto_fips
 [`crypto.pbkdf2()`]: crypto.html#crypto_crypto_pbkdf2_password_salt_iterations_keylen_digest_callback
+[`crypto.randomBytes()`]: crypto.html#crypto_crypto_randombytes_size_callback
 [`crypto.scrypt()`]: crypto.html#crypto_crypto_scrypt_password_salt_keylen_options_callback
 [`decipher.final()`]: crypto.html#crypto_decipher_final_outputencoding
 [`decipher.setAuthTag()`]: crypto.html#crypto_decipher_setauthtag_buffer

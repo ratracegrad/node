@@ -642,17 +642,18 @@ out/doc/api/assets/%: doc/api_assets/% out/doc/api/assets
 	@cp $< $@
 
 
-run-npm-install = $(PWD)/$(NPM) install --production --no-package-lock
 run-npm-ci = $(PWD)/$(NPM) ci
 
-tools/doc/node_modules/js-yaml/package.json:
-	cd tools/doc && $(call available-node,$(run-npm-install))
-
 gen-api = tools/doc/generate.js --node-version=$(FULLVERSION) \
+		--apilinks=out/apilinks.json \
 		--analytics=$(DOCS_ANALYTICS) $< --output-directory=out/doc/api
+gen-apilink = tools/doc/apilinks.js $(wildcard lib/*.js) > $@
+
+out/apilinks.json: $(wildcard lib/*.js) tools/doc/apilinks.js
+	$(call available-node, $(gen-apilink))
 
 out/doc/api/%.json out/doc/api/%.html: doc/api/%.md tools/doc/generate.js \
-	tools/doc/html.js tools/doc/json.js
+	tools/doc/html.js tools/doc/json.js | out/apilinks.json
 	$(call available-node, $(gen-api))
 
 out/doc/api/all.html: $(apidocs_html) tools/doc/allhtml.js
@@ -730,7 +731,7 @@ ifeq ($(findstring arm,$(UNAME_M)),arm)
 DESTCPU ?= arm
 else
 ifeq ($(findstring aarch64,$(UNAME_M)),aarch64)
-DESTCPU ?= aarch64
+DESTCPU ?= arm64
 else
 ifeq ($(findstring powerpc,$(shell uname -p)),powerpc)
 DESTCPU ?= ppc64
@@ -750,7 +751,7 @@ else
 ifeq ($(DESTCPU),arm)
 ARCH=arm
 else
-ifeq ($(DESTCPU),aarch64)
+ifeq ($(DESTCPU),arm64)
 ARCH=arm64
 else
 ifeq ($(DESTCPU),ppc64)
@@ -1074,8 +1075,7 @@ lint-md-build: tools/remark-cli/node_modules \
 
 tools/doc/node_modules: tools/doc/package.json
 ifeq ($(node_use_openssl),true)
-	cd tools/doc && $(call available-node,$(run-npm-install))
-	@touch $@
+	cd tools/doc && $(call available-node,$(run-npm-ci))
 else
 	@echo "Skipping tools/doc/node_modules (no crypto)"
 endif
@@ -1184,7 +1184,7 @@ LINT_CPP_FILES = $(filter-out $(LINT_CPP_EXCLUDE), $(wildcard \
 ADDON_DOC_LINT_FLAGS=-whitespace/ending_newline,-build/header_guard
 
 format-cpp-build:
-	cd tools/clang-format && $(call available-node,$(run-npm-install))
+	cd tools/clang-format && $(call available-node,$(run-npm-ci))
 
 format-cpp-clean:
 	$(RM) -r tools/clang-format/node_modules
