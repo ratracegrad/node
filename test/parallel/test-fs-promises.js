@@ -93,6 +93,30 @@ function verifyStatObject(stat) {
     await handle.datasync();
     await handle.sync();
 
+    // ----------------
+    // {
+    //   const emptyBuf = Buffer.from('');
+    //   const emptyLen = emptyBuf.length;
+    //   assert.deepStrictEqual(emptyLen, 0); // verify length is zero
+    //
+    //   await handle.write(emptyBuf);
+      const ret = await handle.read(Buffer.alloc(emptyLen), 0, emptyLen, 0);
+    //   assert.strictEqual(ret.bytesRead, emptyLen);
+    // }
+    // assert.rejects(
+    //   async () => {
+    //     // await emptyBuf.read();
+    //     await handle.write(emptyBuf);
+    //     const ret = await handle.read(Buffer.alloc(emptyLen), 0, emptyLen, 0);
+    //   },
+    //   {
+    //     code: 'ERR_INVALID_ARG_VALUE',
+    //     name: 'Invalid Argument',
+    //     message: 'Buffer length cannot be zero'
+    //   });
+    // ----------------
+
+
     const buf = Buffer.from('hello fsPromises');
     const bufLen = buf.length;
     await handle.write(buf);
